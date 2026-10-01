@@ -1,8 +1,16 @@
 #include <Arduino.h>
 #include <WiFi.h>
+#include <ESPAsyncWebServer.h>
 #include "esp_wifi.h"
 
-// Define a raw packet structure matching the Espressif driver output
+// Initialize the asynchronous web server engine on standard HTTP Port 80
+AsyncWebServer server(80);
+
+// Global operational counter variables
+unsigned long totalPacketsSniffed = 0;
+int currentChannel = 1;
+
+// Base configuration template structure for raw Espressif packet data
 struct RxControl {
     signed rssi:8;
     unsigned rate:4;
@@ -28,58 +36,88 @@ struct RxControl {
     unsigned dump_len:12;
 };
 
-// This callback function runs every time a raw Wi-Fi packet is caught in the air
+// Promiscuous hardware callback function for logging baseline packet metrics
 void sniffer_callback(void* buf, wifi_promiscuous_pkt_type_t type) {
-    wifi_promiscuous_pkt_t* pkt = (wifi_promiscuous_pkt_t*)buf;
-    RxControl* control = (RxControl*)&pkt->rx_ctrl;
-
-    // Check if the packet contains payload data
-    if (pkt->rx_ctrl.sig_len > 0) {
-        uint8_t* payload = pkt->payload;
-        
-        // Byte 0 of an IEEE 802.11 frame is the Frame Control field
-        uint8_t frame_type = payload[0];
-
-        Serial.print("[Raw Packet] Type: 0x");
-        Serial.print(frame_type, HEX);
-        Serial.print(" | Size: ");
-        Serial.print(pkt->rx_ctrl.sig_len);
-        Serial.print(" bytes | Signal (RSSI): ");
-        Serial.println(control->rssi);
-    }
+    totalPacketsSniffed++;
 }
+
+// HTML & CSS markup structure string for the on-device web management interface
+const char index_html[] PROGMEM = R"rawliteral(
+<!DOCTYPE html>
+<html>
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>ESP32 Diagnostic Console</title>
+    <style>
+        body { font-family: Arial, Helvetica, sans-serif; text-align: center; background-color: #1a1a1a; color: #ffffff; margin: 0; padding: 20px; }
+        .card { background-color: #2d2d2d; padding: 30px; border-radius: 10px; box-shadow: 0 4px 8px rgba(0,0,0,0.3); max-width: 400px; margin: 40px auto; }
+        h1 { color: #00ffcc; font-size: 24px; }
+        .stat { font-size: 48px; font-weight: bold; margin: 20px 0; color: #ffcc00; }
+        .meta { color: #aaaaaa; font-size: 14px; }
+    </style>
+    <script>
+        // Poll the server every 1 second to fetch the live package counters dynamically
+        setInterval(function() {
+            fetch('/stats').then(response => response.json()).then(data => {
+                document.getElementById('packetCount').innerText = data.packets;
+                document.getElementById('currentChan').innerText = data.channel;
+            });
+        }, 1000);
+    </script>
+</head>
+<body>
+    <div class="card">
+        <h1>ESP32 Radio Analyzer</h1>
+        <div class="meta">Diagnostic Mode Status: Active</div>
+        <div class="stat" id="packetCount">0</div>
+        <div class="meta">Raw IEEE 802.11 Frames Processed</div>
+        <p class="meta">Monitoring Radio Channel: <span id="currentChan" style="color:#00ffcc; font-weight:bold;">1</span></p>
+    </div>
+</body>
+</html>
+)rawliteral";
 
 void setup() {
     Serial.begin(115200);
     delay(1000);
-    Serial.println("\n[!] Custom ESP32 Wireless Auditing Module Initializing...");
+    Serial.println("\n[!] Initializing Asynchronous Security Dashboard...");
 
-    // 1. Initialize the Wi-Fi storage configuration baseline
-    WiFi.mode(WIFI_STA);
-    WiFi.disconnect();
+    // 1. Boot up an open Access Point local network zone
+    WiFi.softAP("ESP32-Diagnostic-Console", "");
+    IPAddress IP = WiFi.softAPIP();
+    Serial.print("[+] Access Point Live. Gateway Web Address: http://");
+    Serial.println(IP);
 
-    // 2. Turn off normal link-state logic to prepare for raw operations
-    esp_wifi_stop();
-    
+    // 2. Initialize the background promiscuous auditing engine configuration
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     esp_wifi_init(&cfg);
     esp_wifi_set_storage(WIFI_STORAGE_RAM);
-    esp_wifi_start();
-
-    // 3. Register our sniffer callback function
     esp_wifi_set_promiscuous_rx_cb(sniffer_callback);
-    
-    // 4. Enable Promiscuous Mode
     esp_wifi_set_promiscuous(true);
-    
-    // 5. Lock the hardware radio to Channel 1
-    esp_wifi_set_channel(1, WIFI_SECOND_CHAN_NONE);
+    esp_wifi_set_channel(currentChannel, WIFI_SECOND_CHAN_NONE);
 
-    Serial.println("[+] Promiscuous Sniffer Active on Channel 1. Listening...");
+    // 3. Define the web server URI interface endpoints
+    server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
+        request->send_P(200, "text/html", index_html);
+    });
+
+    server.on("/stats", HTTP_GET, [](AsyncWebServerRequest *request){
+        String json = "{\"packets\":" + String(totalPacketsSniffed) + ",\"channel\":" + String(currentChannel) + "}";
+        request->send(200, "application/json", json);
+    });
+
+    // 4. Fire up the web service engine listeners
+    server.begin();
+    Serial.println("[+] Asynchronous HTTP Server Engine Started Successfully.");
 }
 
 void loop() {
-    // The packet capture runs via background interrupts automatically.
-    // Channel hopping or UI refreshes can be placed here later.
-    delay(1000);
+    // Simple automated channel-hopping logic loop sequence (Channels 1 to 11)
+    static unsigned long lastChannelSwitch = 0;
+    if (millis() - lastChannelSwitch > 5000) { // Hop every 5 seconds
+        lastChannelSwitch = millis();
+        currentChannel++;
+        if (currentChannel > 11) currentChannel = 1;
+        esp_wifi_set_channel(currentChannel, WIFI_SECOND_CHAN_NONE);
+    }
 }
